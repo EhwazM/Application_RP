@@ -17,11 +17,7 @@ import sys
 
 serial_rp = serial.Serial(baudrate=115200)
 
-p = bk_figure(title="Signal",
-          sizing_mode='stretch_both',
-          x_axis_label='Time (s)',
-          y_range=Range1d(start=-0.5, end=3.5)
-)
+p = bk_figure(title="Signal", sizing_mode='stretch_both', x_axis_label='Time (s)', y_axis_label='Voltage (V)', y_range=Range1d(start=-0.5, end=3.5))
     
 bokeh_plot = SerialPlot(plot_b=p,
                         n_plots=2,

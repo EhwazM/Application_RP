@@ -21,14 +21,15 @@ class SerialPlot:
         self.lines = []
         self.scatters = []
         self.y = [0.0 for _ in range(n_plots)]
+
         self.counter = 0
         
         self.baud_rate = baud_rate
         self.data_collect = data_collect
+        self.start = time.time()
         self.setup_plot()
 
     def setup_plot(self):
-
         for i in range(self.n_plots):
             source = ColumnDataSource(data=dict(x=[], y=[]))
             self.sources.append(source)
@@ -81,11 +82,13 @@ class SerialPlot:
                 for i in range(self.n_plots):
                     try:
                         y_temp = float(data[i])
+                        end = time.time()
                     except:
                         print("Data not recognized, skipping plot.")
                         continue
-
-                    new_data = dict(x=[self.counter], y=[y_temp])
+                    
+                    elapsed_time = end - self.start
+                    new_data = dict(x=[elapsed_time], y=[y_temp])
 
                     self.sources[i].stream(new_data, rollover=self.roll_over)
                     
@@ -146,10 +149,23 @@ class SerialPlot:
         return data_bunch
     
     def select_port(self, port_selected):
+        if self.data_collect.is_open:
+            self.data_collect.close()
         print(port_selected + " was selected")
         self.data_collect.baudrate=self.baud_rate
         self.data_collect.port = port_selected
         self.data_collect.open()
+
+    def update_baud_rate(self, bd):
+        if self.data_collect.is_open:
+            self.data_collect.close()
+        self.data_collect.baudrate = bd
+        self.data_collect.open()
+
+    def generate_signal(self, ch=1, vpp=1.5, fq=1e4, wf='sine'):
+        bash_cmd = f'generate {ch} {vpp} {fq} {wf}'
+        self.data_collect.write((bash_cmd + '\n').encode())
+        time.sleep(0.1)
 
         
 
