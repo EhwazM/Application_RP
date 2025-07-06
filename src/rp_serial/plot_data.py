@@ -50,32 +50,32 @@ class SerialPlot:
         if self.osci:
             doc.add_periodic_callback(self.update_oscilloscope, self.update_time)
         else:
-            print("Updating")
             doc.add_periodic_callback(self.update_real_time, self.update_time)
 
 
     def update_oscilloscope(self):
-            print('Starting data recollection.\n')
-            data = self.extract_bunch()
-            # print('Starting plotting.\n')
+            if self.data_collect.is_open:
+                print('Starting data recollection.\n')
+                data = self.extract_bunch()
+                # print('Starting plotting.\n')
 
-            data = np.array(data, dtype=np.float32)
-            # print('Works!\n')
+                data = np.array(data, dtype=np.float32)
+                # print('Works!\n')
+                
+                x_vals = np.arange(data.shape[0])
+                
+                for i in range(self.n_plots):
+                    try:
+                        new_data = dict(x=x_vals, y=data[:, i])
+                        self.sources[i].stream(new_data, rollover=data.shape[0])
+                    except:
+                        print("Data not recognized, skipping plot.")
+                        continue
             
-            x_vals = np.arange(data.shape[0])
-            
-            for i in range(self.n_plots):
-                try:
-                    new_data = dict(x=x_vals, y=data[:, i])
-                    self.sources[i].stream(new_data, rollover=data.shape[0])
-                except:
-                    print("Data not recognized, skipping plot.")
-                    continue
-        
             # print('succesful. \n')
 
     def update_real_time(self):
-        if self.data_collect is not None:
+        if self.data_collect is not None and self.data_collect.is_open:
             while self.data_collect.in_waiting:
                 data = self.extract_data()
                 
@@ -154,13 +154,24 @@ class SerialPlot:
         print(port_selected + " was selected")
         self.data_collect.baudrate=self.baud_rate
         self.data_collect.port = port_selected
-        self.data_collect.open()
+
+        if port_selected != "None":
+            self.data_collect.open()
 
     def update_baud_rate(self, bd):
         if self.data_collect.is_open:
             self.data_collect.close()
         self.data_collect.baudrate = bd
         self.data_collect.open()
+
+    def update_roll_over(self, ro):
+        def _update():
+            self.roll_over=ro
+            
+        if hasattr(self, "doc"):
+            self.doc.add_next_tick_callback(_update)
+        else:
+            print("Document not attached yet.")
 
     def generate_signal(self, ch=1, vpp=1.5, fq=1e4, wf='sine'):
         bash_cmd = f'generate {ch} {vpp} {fq} {wf}'

@@ -1,4 +1,3 @@
-
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QThread, Signal
 from bokeh.server.server import Server
@@ -17,7 +16,7 @@ import sys
 
 serial_rp = serial.Serial(baudrate=115200)
 
-p = bk_figure(title="Signal", sizing_mode='stretch_both', x_axis_label='Time (s)', y_axis_label='Voltage (V)', y_range=Range1d(start=-0.5, end=3.5))
+p = bk_figure(title="Signal", sizing_mode='stretch_both', x_axis_label='Time (s)', y_axis_label='Voltage (V)', y_range=Range1d(start=-0.5, end=3.5)) # type: ignore
     
 bokeh_plot = SerialPlot(plot_b=p,
                         n_plots=2,
@@ -25,11 +24,11 @@ bokeh_plot = SerialPlot(plot_b=p,
                         colors=['green', 'purple'],
                         update_time=1,
                         scatter_plot=True,
-                        oscilloscope_mode=True,
+                        # oscilloscope_mode=True,
                         data_collect=serial_rp
 )
 
-def modify_doc(doc, bokeh_plot):                
+def modify_doc(doc, bokeh_plot):
   bokeh_plot.attach_doc(doc)
 
 def start_bokeh_server():

@@ -1,163 +1,180 @@
-﻿from PySide6.QtCore import QUrl, QThread, Signal
-from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QApplication, QMainWindow, QPushButton, QWidget, QHBoxLayout, QVBoxLayout, QLineEdit, QLabel, QComboBox, QGroupBox,
-                               QDoubleSpinBox, QSpinBox, QAbstractSpinBox, QTabWidget, QSizePolicy)
+﻿from PySide6.QtCore import QUrl
+from PySide6.QtWidgets import (
+    QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QTabWidget, QLabel, QDoubleSpinBox, QSpinBox,
+    QComboBox, QPushButton, QSizePolicy, QFormLayout
+)
 from PySide6.QtGui import QAction
-from bokeh.server.server import Server
-from bokeh.plotting import figure
-
+from PySide6.QtWebEngineWidgets import QWebEngineView
 from rp_serial.plot_data import SerialPlot
 
-import serial, sys
+class GeneratorSettingsWidget(QWidget):
+    def __init__(self, channel: int, on_change_callback):
+        super().__init__()
+        self.channel = channel
+        self.on_change_callback = on_change_callback
+
+        self.default_vpp = 1.5
+        self.default_freq = int(1e4)
+        self.default_waveform = "sine"
+
+        layout = QFormLayout()
+
+        self.vpp_spin = QDoubleSpinBox()
+        self.vpp_spin.setRange(0, 2)
+        self.vpp_spin.setDecimals(1)
+        self.vpp_spin.setSingleStep(0.1)
+        self.vpp_spin.setValue(1.5)
+        self.vpp_spin.valueChanged.connect(self.emit_values)
+        layout.addRow(f"CH{channel} Vpp:", self.vpp_spin)
+
+        self.freq_spin = QSpinBox()
+        self.freq_spin.setRange(0, int(6.25e7))
+        self.freq_spin.setSingleStep(100)
+        self.freq_spin.setValue(int(1e4))
+        self.freq_spin.valueChanged.connect(self.emit_values)
+        layout.addRow(f"CH{channel} Frequency:", self.freq_spin)
+
+        self.waveform_combo = QComboBox()
+        self.waveform_combo.addItems(["sine", "sqr", "tri", "sweep", "dc"])
+        self.waveform_combo.currentTextChanged.connect(self.emit_values)
+        layout.addRow(f"CH{channel} Waveform:", self.waveform_combo)
+        
+        self.default_button = QPushButton("Default Values")
+        self.default_button.pressed.connect(self.default_values)
+        layout.addRow(self.default_button)
+
+        self.setLayout(layout)
+
+    def emit_values(self):
+        self.on_change_callback(
+            ch=self.channel,
+            vpp=self.vpp_spin.value(),
+            fq=self.freq_spin.value(),
+            wf=self.waveform_combo.currentText()
+        )
+
+    def default_values(self):
+        self.vpp_spin.setValue(self.default_vpp)
+        self.freq_spin.setValue(self.default_freq)
+        self.waveform_combo.setCurrentText(self.default_waveform)
 
 class Oscilloscope(QMainWindow):
     def __init__(self, app, serialrp_plot: SerialPlot, url='http://localhost:5006/main'):
         super().__init__()
         self.app = app
-        self.url = url
         self.serialrp_plot = serialrp_plot
-        self.setWindowTitle("Navegador Web Embebido")
-        self.create_menu_bar()
+        self.setWindowTitle("Oscilloscope Control Panel")
 
-        # Widgets
+        # Default Values
 
-        ## WebEngine (Bokeh Plot)
+        self.default_port = "None"
+        self.default_baudrate = 115200
+        self.default_y_min = 0.0
+        self.default_y_max = 3.5
+        self.default_roll_over = 1000
+
+        # Init
+
         self.browser = QWebEngineView()
         self.browser.setUrl(QUrl(url))
 
-        ## List of serial ports
+        self.init_ui()
+        self.create_menu_bar()
 
+    def init_ui(self):
+        self.central_widget = QWidget()
+        main_layout = QHBoxLayout(self.central_widget)
+
+        # Sidebar
+        sidebar_layout = QVBoxLayout()
+
+        # Serial Settings
         self.ports_list = QComboBox()
+        self.ports_list.addItem("None")
         self.ports_list.addItems(self.serialrp_plot.search())
-
+        self.ports_list.setCurrentText(self.default_port)
         self.ports_list.textActivated.connect(self.serialrp_plot.select_port)
 
-        self.updt_port_list_button = QPushButton("Update Port list")
-        self.updt_port_list_button.pressed.connect(self.update_port_list)
+        self.baud_rate_spin = QSpinBox()
+        self.baud_rate_spin.setRange(0, int(1e7))
+        self.baud_rate_spin.setValue(self.serialrp_plot.data_collect.baudrate)
+        self.baud_rate_spin.valueChanged.connect(self.serialrp_plot.update_baud_rate)
 
-        ## Serial baud-rate
+        self.roll_over_spin = QSpinBox()
+        self.roll_over_spin.setRange(1,int(1e7))
+        self.roll_over_spin.setValue(self.default_roll_over)
+        self.roll_over_spin.valueChanged.connect(self.serialrp_plot.update_roll_over)
 
-        self.serial_baud_rate_spin = QSpinBox()
-        self.serial_baud_rate_spin.setMinimum(0)
-        self.serial_baud_rate_spin.setMaximum(int(1e7))
-        self.serial_baud_rate_spin.setValue(self.serialrp_plot.data_collect.baudrate)
-        self.serial_baud_rate_spin.valueChanged.connect(self.serialrp_plot.update_baud_rate)
+        update_ports_btn = QPushButton("Update Ports")
+        update_ports_btn.clicked.connect(self.update_port_list)
 
-        ## Generator 
+        serial_group = QGroupBox("Serial Settings")
+        serial_layout = QFormLayout(serial_group)
+        serial_layout.addRow("Available Ports:", self.ports_list)
+        serial_layout.addRow("Baud Rate:", self.baud_rate_spin)
+        serial_layout.addRow("Roll_Over:", self.roll_over_spin)
+        serial_layout.addRow(update_ports_btn)  # Add as a full-width row
 
-        self.create_generator_settings()
-        self.test_button = QPushButton()
-        self.test_button.pressed.connect(self.serialrp_plot.generate_signal)
+        # Generator Tabs
+        generator_tab = QTabWidget()
+        generator_tab.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
 
-        ## Min-Max ranges
+        for ch in [1, 2]:
+            gen_widget = GeneratorSettingsWidget(channel=ch, on_change_callback=self.serialrp_plot.generate_signal)
+            generator_tab.addTab(gen_widget, f"CH{ch}")
 
-        self.min_spinbox = QDoubleSpinBox()
-        self.min_spinbox.setDecimals(2)
-        self.min_spinbox.setSingleStep(0.1)
-        self.min_spinbox.setMinimum(-100)
-        self.min_spinbox.setValue(self.serialrp_plot.plot_b.y_range.start)
-        self.min_spinbox.valueChanged.connect(self.set_y_range_from_spinboxes)
+        generator_group = QGroupBox("Generator Settings")
+        generator_layout = QVBoxLayout(generator_group)
+        generator_layout.addWidget(generator_tab)
 
-        self.max_spinbox = QDoubleSpinBox()
-        self.max_spinbox.setDecimals(2)
-        self.max_spinbox.setSingleStep(0.1)
-        self.max_spinbox.setMaximum(100)
-        self.max_spinbox.setValue(self.serialrp_plot.plot_b.y_range.end)
-        self.max_spinbox.valueChanged.connect(self.set_y_range_from_spinboxes)
-    
-        # Layouts
+        # Y Range Settings
+        self.max_y_spin = QDoubleSpinBox()
+        self.max_y_spin.setRange(-100, 100)
+        self.max_y_spin.setValue(self.serialrp_plot.plot_b.y_range.end)
+        self.max_y_spin.valueChanged.connect(self.update_y_range)
 
-        self.osci_layout = QVBoxLayout()
-        self.osci_layout.addWidget(self.browser)
+        self.min_y_spin = QDoubleSpinBox()
+        self.min_y_spin.setRange(-100, 100)
+        self.min_y_spin.setValue(self.serialrp_plot.plot_b.y_range.start)
+        self.min_y_spin.valueChanged.connect(self.update_y_range)
 
-        self.serial_layout = QVBoxLayout()
-        self.serial_layout.addWidget(self.ports_list)
-        self.serial_layout.addWidget(self.serial_baud_rate_spin)
-        self.serial_layout.addWidget(self.updt_port_list_button)
+        y_range_group = QGroupBox("Voltage Range")
+        y_range_layout = QFormLayout(y_range_group)
+        y_range_layout.addRow("Max V:", self.max_y_spin)
+        y_range_layout.addRow("Min V:", self.min_y_spin)
 
-        self.page1 = QWidget()
-        self.page2 = QWidget()
+        # Sidebar assembly
+        sidebar_layout.addWidget(serial_group)
+        sidebar_layout.addWidget(generator_group)
+        sidebar_layout.addWidget(y_range_group)
 
-        self.osci_generator_layout_1 = QVBoxLayout(self.page1)
-        # self.osci_generator_layout_1.addWidget(self.test_button)
-        # self.osci_generator_layout_1.addWidget(self.ch_spinbox_1)
-        self.osci_generator_layout_1.addWidget(self.vpp_spinbox_1)
-        self.osci_generator_layout_1.addWidget(self.fq_spinbox_1)
-        self.osci_generator_layout_1.addWidget(self.wf_combobox_1)
+        # Add to main layout
+        main_layout.addLayout(sidebar_layout)
+        main_layout.addWidget(self.browser, stretch=1)
 
-        self.osci_generator_layout_2 = QVBoxLayout(self.page2)
-        # self.osci_generator_layout_2.addWidget(self.test_button)
-        # self.osci_generator_layout_2.addWidget(self.ch_spinbox_2)
-        self.osci_generator_layout_2.addWidget(self.vpp_spinbox_2)
-        self.osci_generator_layout_2.addWidget(self.fq_spinbox_2)
-        self.osci_generator_layout_2.addWidget(self.wf_combobox_2)
-
-        self.osci_settings_layout = QVBoxLayout()
-        self.osci_settings_layout.addWidget(self.min_spinbox)
-        self.osci_settings_layout.addWidget(self.max_spinbox)
-
-        # TabWidgets
-
-        self.generator_tabwidget = QTabWidget()
-        self.generator_tabwidget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
-        self.generator_tabwidget.addTab(self.page1, "1")
-        self.generator_tabwidget.addTab(self.page2, "2")
-
-        # Group Boxes
-
-        self.osci_groupbox = QGroupBox("Oscilloscope")
-        self.osci_groupbox.setLayout(self.osci_layout)
-
-        self.serial_groupbox = QGroupBox("Serial Settings")
-        self.serial_groupbox.setLayout(self.serial_layout)
-
-        self.osci_generator_groupbox = QGroupBox("Generator Settings")
-
-        self.osci_settings_groupbox = QGroupBox("Oscilloscope settings")
-        self.osci_settings_groupbox.setLayout(self.osci_settings_layout)
-
-        # Final Layouts
-
-        self.menu_layout = QVBoxLayout()
-        self.menu_layout.addWidget(self.serial_groupbox)
-        self.menu_layout.addWidget(self.generator_tabwidget)
-        self.menu_layout.addWidget(self.osci_settings_groupbox)
-        
-        self.central_widget = QWidget()
-        self.osci_layout = QHBoxLayout()
-        self.osci_layout.addLayout(self.menu_layout)
-        self.osci_layout.addWidget(self.osci_groupbox, stretch=1)
-        self.central_widget.setLayout(self.osci_layout)
         self.setCentralWidget(self.central_widget)
 
     def update_port_list(self):
         self.ports_list.clear()
+        self.ports_list.addItem("None")
         self.ports_list.addItems(self.serialrp_plot.search())
 
-    def update_generator_values_1(self):
-        ch = 1
-        vpp = self.vpp_spinbox_1.value()
-        fq = self.fq_spinbox_1.value()
-        wf = self.wf_combobox_1.currentText()
+    def update_y_range(self):
+        self.serialrp_plot.update_y_range(
+            min_val=self.min_y_spin.value(),
+            max_val=self.max_y_spin.value()
+        )
 
-        self.serialrp_plot.generate_signal(ch=ch, vpp=vpp, fq=fq, wf=wf)
-
-    def update_generator_values_2(self):
-        ch = 2
-        vpp = self.vpp_spinbox_2.value()
-        fq = self.fq_spinbox_2.value()
-        wf = self.wf_combobox_2.currentText()
-
-        self.serialrp_plot.generate_signal(ch=ch, vpp=vpp, fq=fq, wf=wf)
-
-    def set_y_range_from_spinboxes(self):
-        min_val = self.min_spinbox.value()
-        max_val = self.max_spinbox.value()
-        self.serialrp_plot.update_y_range(min_val=min_val, max_val=max_val)
+    def reset_all(self):
+        self.serialrp_plot.data_collect.close()
+        self.ports_list.setCurrentText("None")
+        self.baud_rate_spin.setValue(self.default_baudrate)
+        self.max_y_spin.setValue(self.default_y_max)
+        self.min_y_spin.setValue(self.default_y_min)
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
-
         # File menu
         file_menu = menu_bar.addMenu("File")
         exit_action = QAction("Exit", self)
@@ -172,7 +189,12 @@ class Oscilloscope(QMainWindow):
         tools_menu = menu_bar.addMenu("Tools")
         update_ports_action = QAction("Update Ports", self)
         update_ports_action.triggered.connect(self.update_port_list)
-        tools_menu.addAction(update_ports_action)
+        reset_all_action = QAction("Reset application", self)
+        reset_all_action.triggered.connect(self.reset_all)
+        tools_menu.addActions(
+            [update_ports_action,
+            reset_all_action]
+        )
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")
@@ -180,58 +202,3 @@ class Oscilloscope(QMainWindow):
         about_action.triggered.connect(lambda: print("Oscilloscope app v1.0"))  # Replace with real dialog
         help_menu.addAction(about_action)
 
-    def create_generator_settings(self):
-        ## 1
-        # self.ch_spinbox_1 = QSpinBox()
-        # self.ch_spinbox_1.setSingleStep(1)
-        # self.ch_spinbox_1.setMaximum(2)
-        # self.ch_spinbox_1.setMinimum(1)
-        # self.ch_spinbox_1.setValue(1)
-        # self.ch_spinbox_1.valueChanged.connect(self.update_generator_values)
-
-        self.vpp_spinbox_1 = QDoubleSpinBox()
-        self.vpp_spinbox_1.setDecimals(1)
-        self.vpp_spinbox_1.setSingleStep(0.1)
-        self.vpp_spinbox_1.setMaximum(2)
-        self.vpp_spinbox_1.setMinimum(0)
-        self.vpp_spinbox_1.setValue(1.5)
-        self.vpp_spinbox_1.valueChanged.connect(self.update_generator_values_1)
-
-        self.fq_spinbox_1 = QSpinBox()
-        self.fq_spinbox_1.setSingleStep(1000)
-        self.fq_spinbox_1.setMaximum(int(6.25e7))
-        self.fq_spinbox_1.setMinimum(0)
-        self.fq_spinbox_1.setValue(int(1e4))
-        self.fq_spinbox_1.valueChanged.connect(self.update_generator_values_1)
-
-        self.wf_combobox_1 = QComboBox()
-        self.wf_combobox_1.addItems(["sine", "sqr", "tri", "sweep", "dc"])
-        self.wf_combobox_1.textActivated.connect(self.update_generator_values_1)
-
-        ## 2
-
-        # self.ch_spinbox_2 = QSpinBox()
-        # self.ch_spinbox_2.setSingleStep(1)
-        # self.ch_spinbox_2.setMaximum(2)
-        # self.ch_spinbox_2.setMinimum(1)
-        # self.ch_spinbox_2.setValue(1)
-        # self.ch_spinbox_2.valueChanged.connect(self.update_generator_values)
-
-        self.vpp_spinbox_2 = QDoubleSpinBox()
-        self.vpp_spinbox_2.setDecimals(1)
-        self.vpp_spinbox_2.setSingleStep(0.1)
-        self.vpp_spinbox_2.setMaximum(2)
-        self.vpp_spinbox_2.setMinimum(0)
-        self.vpp_spinbox_2.setValue(1.5)
-        self.vpp_spinbox_2.valueChanged.connect(self.update_generator_values_2)
-
-        self.fq_spinbox_2 = QSpinBox()
-        self.fq_spinbox_2.setSingleStep(1000)
-        self.fq_spinbox_2.setMaximum(int(6.25e7))
-        self.fq_spinbox_2.setMinimum(0)
-        self.fq_spinbox_2.setValue(int(1e4))
-        self.fq_spinbox_2.valueChanged.connect(self.update_generator_values_2)
-
-        self.wf_combobox_2 = QComboBox()
-        self.wf_combobox_2.addItems(["sine", "sqr", "tri", "sweep", "dc"])
-        self.wf_combobox_2.textActivated.connect(self.update_generator_values_2)
