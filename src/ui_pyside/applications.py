@@ -2,11 +2,11 @@
 from PySide6.QtWidgets import (
     QMainWindow, QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QTabWidget, QLabel, QDoubleSpinBox, QSpinBox,
-    QComboBox, QPushButton, QSizePolicy, QFormLayout
+    QComboBox, QPushButton, QSizePolicy, QFormLayout, QRadioButton
 )
 from PySide6.QtGui import QAction
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from rp_serial.plot_data import SerialPlot
+from rp_plot.plot_data import SerialPlot
 
 class GeneratorSettingsWidget(QWidget):
     def __init__(self, channel: int, on_change_callback):
@@ -39,6 +39,10 @@ class GeneratorSettingsWidget(QWidget):
         self.waveform_combo.addItems(["sine", "sqr", "tri", "sweep", "dc"])
         self.waveform_combo.currentTextChanged.connect(self.emit_values)
         layout.addRow(f"CH{channel} Waveform:", self.waveform_combo)
+
+        self.generate_button = QPushButton("Generate signal")
+        self.generate_button.pressed.connect(self.emit_values)
+        layout.addRow(self.generate_button)
         
         self.default_button = QPushButton("Default Values")
         self.default_button.pressed.connect(self.default_values)
@@ -67,7 +71,6 @@ class Oscilloscope(QMainWindow):
         self.setWindowTitle("Oscilloscope Control Panel")
 
         # Default Values
-
         self.default_port = "None"
         self.default_baudrate = 115200
         self.default_y_min = 0.0
@@ -75,7 +78,6 @@ class Oscilloscope(QMainWindow):
         self.default_roll_over = 1000
 
         # Init
-
         self.browser = QWebEngineView()
         self.browser.setUrl(QUrl(url))
 
@@ -121,7 +123,7 @@ class Oscilloscope(QMainWindow):
         generator_tab.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
 
         for ch in [1, 2]:
-            gen_widget = GeneratorSettingsWidget(channel=ch, on_change_callback=self.serialrp_plot.generate_signal)
+            gen_widget = GeneratorSettingsWidget(channel=ch, on_change_callback=self.serialrp_plot.generate_signal_scpi)
             generator_tab.addTab(gen_widget, f"CH{ch}")
 
         generator_group = QGroupBox("Generator Settings")
@@ -139,15 +141,20 @@ class Oscilloscope(QMainWindow):
         self.min_y_spin.setValue(self.serialrp_plot.plot_b.y_range.start)
         self.min_y_spin.valueChanged.connect(self.update_y_range)
 
-        y_range_group = QGroupBox("Voltage Range")
-        y_range_layout = QFormLayout(y_range_group)
-        y_range_layout.addRow("Max V:", self.max_y_spin)
-        y_range_layout.addRow("Min V:", self.min_y_spin)
+        self.scatter_radio = QRadioButton()
+        self.scatter_radio.setChecked(self.serialrp_plot.scatter_plot)
+        self.scatter_radio.toggled.connect(self.serialrp_plot.change_scatter)
+
+        plot_options_group = QGroupBox("Voltage Range")
+        plot_options_layout = QFormLayout(plot_options_group)
+        plot_options_layout.addRow("Max V:", self.max_y_spin)
+        plot_options_layout.addRow("Min V:", self.min_y_spin)
+        plot_options_layout.addRow("Scatter:", self.scatter_radio)
 
         # Sidebar assembly
         sidebar_layout.addWidget(serial_group)
         sidebar_layout.addWidget(generator_group)
-        sidebar_layout.addWidget(y_range_group)
+        sidebar_layout.addWidget(plot_options_group)
 
         # Add to main layout
         main_layout.addLayout(sidebar_layout)
@@ -166,6 +173,14 @@ class Oscilloscope(QMainWindow):
             max_val=self.max_y_spin.value()
         )
 
+    def change_osci_mode(self):
+        self.ports_list.setCurrentText(self.default_port)
+        self.serialrp_plot.change_to_oscilloscope_mode()
+
+    def change_to_real_time_mode(self):
+        self.ports_list.setCurrentText(self.default_port)
+        self.serialrp_plot.change_to_real_time_mode()
+
     def reset_all(self):
         self.serialrp_plot.data_collect.close()
         self.ports_list.setCurrentText("None")
@@ -183,22 +198,32 @@ class Oscilloscope(QMainWindow):
 
         # Edit menu (empty for now)
         edit_menu = menu_bar.addMenu("Edit")
-        # You can add future actions here
 
         # Tools menu
         tools_menu = menu_bar.addMenu("Tools")
+
         update_ports_action = QAction("Update Ports", self)
         update_ports_action.triggered.connect(self.update_port_list)
+
         reset_all_action = QAction("Reset application", self)
         reset_all_action.triggered.connect(self.reset_all)
-        tools_menu.addActions(
-            [update_ports_action,
-            reset_all_action]
-        )
+
+        osci_mode_action = QAction("Change to oscillocope mode", self)
+        osci_mode_action.triggered.connect(self.change_osci_mode)
+
+        real_time_mode_action = QAction("Change to real time mode", self)
+        real_time_mode_action.triggered.connect(self.change_to_real_time_mode)
+
+        tools_menu.addActions([
+            update_ports_action,
+            reset_all_action,
+            osci_mode_action,
+            real_time_mode_action
+            ])
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")
         about_action = QAction("About", self)
-        about_action.triggered.connect(lambda: print("Oscilloscope app v1.0"))  # Replace with real dialog
+        about_action.triggered.connect(lambda: print("Oscilloscope app v1.0"))
         help_menu.addAction(about_action)
 
